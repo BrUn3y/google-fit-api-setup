@@ -2,6 +2,12 @@
 
 A Python script to authenticate with Google Fit API using OAuth 2.0 and retrieve your physical activity data including steps, calories, distance, and active minutes.
 
+## Purpose
+
+This repository provides the Google Fit API integration code used to automatically update the fitness widget in my [GitHub profile README](https://github.com/BrUn3y/Brun3y#-fitness-stats-august-2026). The widget displays real-time fitness statistics including steps, calories, distance, and active minutes.
+
+**See it in action:** [github.com/BrUn3y](https://github.com/BrUn3y)
+
 ## Features
 
 - OAuth 2.0 authentication with Google Fit API
