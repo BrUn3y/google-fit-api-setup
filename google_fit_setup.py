@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Google Fit API Setup Script
+Script para obtener datos de actividad física de Google Fit API
 
-This script authenticates with Google Fit API using OAuth 2.0 and retrieves
-your physical activity data including steps, calories, distance, and active minutes.
+Usa las credenciales OAuth 2.0 del archivo .env
 """
 
 import os
@@ -15,10 +14,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 import json
 
-# Load environment variables
+# Cargar variables de entorno
 load_dotenv()
 
-# Required scopes for reading fitness data
+# Scopes necesarios para leer datos de actividad física
 SCOPES = [
     'https://www.googleapis.com/auth/fitness.activity.read',
     'https://www.googleapis.com/auth/fitness.location.read',
@@ -26,13 +25,13 @@ SCOPES = [
 ]
 
 def create_credentials_file():
-    """Creates credentials.json from environment variables"""
+    """Crea el archivo credentials.json desde las variables de entorno"""
     client_id = os.getenv('GOOGLE_FIT_CLIENT_ID')
     client_secret = os.getenv('GOOGLE_FIT_CLIENT_SECRET')
-
+    
     if not client_id or not client_secret:
-        raise ValueError("Missing GOOGLE_FIT_CLIENT_ID or GOOGLE_FIT_CLIENT_SECRET in .env")
-
+        raise ValueError("Faltan GOOGLE_FIT_CLIENT_ID o GOOGLE_FIT_CLIENT_SECRET en .env")
+    
     credentials = {
         "installed": {
             "client_id": client_id,
@@ -43,120 +42,146 @@ def create_credentials_file():
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"
         }
     }
-
+    
     with open('credentials.json', 'w') as f:
         json.dump(credentials, f, indent=2)
-
-    return 'credentials.json'
+    
+    print("✅ Archivo credentials.json creado desde .env")
 
 def authenticate():
-    """Handles OAuth 2.0 authentication flow"""
+    """Autentica con Google Fit API usando OAuth 2.0"""
     creds = None
-
-    # Check if token.json exists (previous authentication)
+    
+    # Crear credentials.json si no existe
+    if not os.path.exists('credentials.json'):
+        create_credentials_file()
+    
+    # El archivo token.json almacena los tokens de acceso y refresh
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-
-    # If no valid credentials, authenticate
+    
+    # Si no hay credenciales válidas, solicita login
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            print("Refreshing expired token...")
             creds.refresh(Request())
         else:
-            print("Starting OAuth 2.0 authentication flow...")
-            credentials_file = create_credentials_file()
             flow = InstalledAppFlow.from_client_secrets_file(
-                credentials_file, SCOPES)
+                'credentials.json', SCOPES)
             creds = flow.run_local_server(port=8080)
-
-        # Save credentials for future use
+        
+        # Guarda las credenciales para la próxima ejecución
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
-        print("Authentication successful! Token saved to token.json")
-
+    
     return creds
 
-def get_fitness_data(service, days=7):
-    """Retrieves fitness data for the specified number of days"""
-    # Calculate time range (last N days)
+def get_activity_data(service, days_back=7):
+    """Obtiene datos de actividad física de los últimos N días"""
+    
+    # Calcular timestamps en nanosegundos
     end_time = datetime.datetime.now()
-    start_time = end_time - datetime.timedelta(days=days)
-
-    # Convert to nanoseconds (Google Fit API format)
-    start_time_ns = int(start_time.timestamp() * 1e9)
+    start_time = end_time - datetime.timedelta(days=days_back)
+    
     end_time_ns = int(end_time.timestamp() * 1e9)
-
-    print(f"\nFetching data from {start_time.strftime('%Y-%m-%d')} to {end_time.strftime('%Y-%m-%d')}")
-
-    # Data sources to query
-    data_sources = {
-        'steps': 'derived:com.google.step_count.delta:com.google.android.gms:estimated_steps',
-        'calories': 'derived:com.google.calories.expended:com.google.android.gms:merge_calories_expended',
-        'distance': 'derived:com.google.distance.delta:com.google.android.gms:merge_distance_delta',
-        'active_minutes': 'derived:com.google.active_minutes:com.google.android.gms:merge_active_minutes'
-    }
-
+    start_time_ns = int(start_time.timestamp() * 1e9)
+    
+    # Tipos de datos disponibles
+    data_sources = [
+        'derived:com.google.step_count.delta:com.google.android.gms:estimated_steps',
+        'derived:com.google.calories.expended:com.google.android.gms:merge_calories_expended',
+        'derived:com.google.distance.delta:com.google.android.gms:merge_distance_delta',
+        'derived:com.google.active_minutes:com.google.android.gms:merge_active_minutes'
+    ]
+    
     results = {}
-
-    for metric, data_source in data_sources.items():
+    
+    for data_source in data_sources:
         try:
             dataset_id = f"{start_time_ns}-{end_time_ns}"
-            dataset = service.users().dataSources().datasets().get(
+            
+            response = service.users().dataSources().datasets().get(
                 userId='me',
                 dataSourceId=data_source,
                 datasetId=dataset_id
             ).execute()
-
-            # Process data points
-            total = 0
-            if 'point' in dataset:
-                for point in dataset['point']:
-                    for value in point.get('value', []):
-                        if 'intVal' in value:
-                            total += value['intVal']
-                        elif 'fpVal' in value:
-                            total += value['fpVal']
-
-            results[metric] = total
-            print(f"✓ {metric.replace('_', ' ').title()}: {total:.2f}")
-
+            
+            data_type = data_source.split(':')[1].split('.')[2]
+            results[data_type] = response.get('point', [])
+            
         except Exception as e:
-            print(f"✗ Error fetching {metric}: {str(e)}")
-            results[metric] = None
-
+            print(f"⚠️  Error obteniendo {data_source}: {e}")
+    
     return results
 
+def format_activity_summary(data):
+    """Formatea los datos de actividad en un resumen legible"""
+    
+    summary = {
+        'pasos_totales': 0,
+        'calorias_totales': 0,
+        'distancia_total_km': 0,
+        'minutos_activos': 0
+    }
+    
+    # Procesar pasos
+    if 'step_count' in data:
+        for point in data['step_count']:
+            for value in point.get('value', []):
+                summary['pasos_totales'] += value.get('intVal', 0)
+    
+    # Procesar calorías
+    if 'calories' in data:
+        for point in data['calories']:
+            for value in point.get('value', []):
+                summary['calorias_totales'] += value.get('fpVal', 0)
+    
+    # Procesar distancia (convertir de metros a km)
+    if 'distance' in data:
+        for point in data['distance']:
+            for value in point.get('value', []):
+                summary['distancia_total_km'] += value.get('fpVal', 0) / 1000
+    
+    # Procesar minutos activos
+    if 'active_minutes' in data:
+        for point in data['active_minutes']:
+            for value in point.get('value', []):
+                summary['minutos_activos'] += value.get('intVal', 0)
+    
+    return summary
+
 def main():
-    """Main execution function"""
-    print("=" * 50)
-    print("Google Fit API - Activity Data Retrieval")
-    print("=" * 50)
-
+    """Función principal"""
+    print("🏃 Conectando a Google Fit API...\n")
+    
     try:
-        # Authenticate
+        # Autenticar
         creds = authenticate()
-
-        # Build service
-        print("\nConnecting to Google Fit API...")
         service = build('fitness', 'v1', credentials=creds)
-
-        # Get fitness data
-        data = get_fitness_data(service, days=7)
-
-        print("\n" + "=" * 50)
-        print("Summary (Last 7 days):")
+        
+        print("✅ Conexión exitosa a Google Fit API\n")
+        
+        # Obtener datos de los últimos 7 días
+        print("📊 Consultando actividad de los últimos 7 días...\n")
+        activity_data = get_activity_data(service, days_back=7)
+        
+        # Formatear resumen
+        summary = format_activity_summary(activity_data)
+        
+        # Mostrar resultados
         print("=" * 50)
-        print(f"Steps: {data.get('steps', 0):.0f}")
-        print(f"Calories: {data.get('calories', 0):.2f} kcal")
-        print(f"Distance: {data.get('distance', 0):.2f} meters")
-        print(f"Active Minutes: {data.get('active_minutes', 0):.0f} min")
+        print("RESUMEN DE ACTIVIDAD FÍSICA (últimos 7 días)")
         print("=" * 50)
-
+        print(f"👟 Pasos totales: {summary['pasos_totales']:,}")
+        print(f"🔥 Calorías quemadas: {summary['calorias_totales']:.0f} kcal")
+        print(f"📏 Distancia recorrida: {summary['distancia_total_km']:.2f} km")
+        print(f"⏱️  Minutos activos: {summary['minutos_activos']} min")
+        print("=" * 50)
+        
+        return summary
+        
     except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
-        return 1
-
-    return 0
+        print(f"❌ Error: {e}")
+        return None
 
 if __name__ == '__main__':
-    exit(main())
+    main()
